@@ -26,6 +26,23 @@ function resolveTenantDomain(env, fallback) {
 }
 
 /**
+ * Canonical domain to use in CLI proxy mode. API calls go to the local proxy
+ * host, but logs queries and the canonical-domain check need the tenant's own
+ * hostname. Returns null when the CLI did not report a real tenant domain
+ * (tenantDomain is then just the proxy host), so the proxy host is never
+ * mistaken for a canonical domain.
+ * @param {string} tenantDomain
+ * @param {string} proxyHost
+ * @returns {string|null}
+ */
+function getProxyCanonicalDomain(tenantDomain, proxyHost) {
+  if (!tenantDomain || tenantDomain === proxyHost) {
+    return null;
+  }
+  return tenantDomain;
+}
+
+/**
  * Domain shown to the user (report filenames, PDF header). API calls keep
  * using config.auth0Domain.
  * @param {Object} config
@@ -71,6 +88,7 @@ function writeJsonAndExit(payload, code) {
 module.exports = {
   isAgentMode,
   resolveTenantDomain,
+  getProxyCanonicalDomain,
   getDisplayDomain,
   buildAgentOutput,
   buildAgentError,

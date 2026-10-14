@@ -26,6 +26,7 @@ const CONSTANTS = require('../analyzer/lib/constants');
 const {
   isAgentMode,
   resolveTenantDomain,
+  getProxyCanonicalDomain,
   getDisplayDomain,
   buildAgentOutput,
   buildAgentError,
@@ -415,6 +416,8 @@ if (answers.showValidators) {
     answers.auth0Domain = cliProxyUrl.replace(/^https?:\/\//, "");
     // auth0Domain is the local proxy host; tenantDomain is the real tenant, for display.
     answers.tenantDomain = resolveTenantDomain(process.env, answers.auth0Domain);
+    // Logs queries and the canonical-domain check need the real tenant host, not the proxy host.
+    answers.auth0CanonicalDomain = getProxyCanonicalDomain(answers.tenantDomain, answers.auth0Domain);
     answers.auth0MgmtToken = cliProxyToken;
     console.log(chalk.green(`\n✅  Using the Auth0 CLI proxy to authenticate (${answers.tenantDomain}).`));
   } else if (envAuthReady) {

@@ -2,6 +2,7 @@ const { expect } = require("chai");
 const {
   isAgentMode,
   resolveTenantDomain,
+  getProxyCanonicalDomain,
   getDisplayDomain,
   buildAgentOutput,
   buildAgentError,
@@ -41,6 +42,23 @@ describe("agent mode helpers", function() {
       expect(
         resolveTenantDomain({ AUTH0_CLI_TENANT_DOMAIN: "" }, "127.0.0.1:1234"),
       ).to.equal("127.0.0.1:1234");
+    });
+  });
+
+  describe("getProxyCanonicalDomain", function() {
+    it("returns the real tenant domain", function() {
+      expect(getProxyCanonicalDomain("acme.us.auth0.com", "127.0.0.1:5000")).to.equal(
+        "acme.us.auth0.com",
+      );
+    });
+
+    it("returns null when the tenant domain fell back to the proxy host", function() {
+      expect(getProxyCanonicalDomain("127.0.0.1:5000", "127.0.0.1:5000")).to.equal(null);
+    });
+
+    it("returns null when the tenant domain is missing", function() {
+      expect(getProxyCanonicalDomain(undefined, "127.0.0.1:5000")).to.equal(null);
+      expect(getProxyCanonicalDomain("", "127.0.0.1:5000")).to.equal(null);
     });
   });
 
