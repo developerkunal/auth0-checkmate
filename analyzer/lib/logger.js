@@ -1,4 +1,6 @@
-const { format, createLogger, transports } = require("winston");
+const { format, createLogger, transports, config } = require("winston");
+
+const { isAgentMode } = require("./agent-mode");
 
 const { combine, timestamp, colorize } = format;
 const logger = createLogger({
@@ -10,7 +12,12 @@ const logger = createLogger({
       (info) => `${info.timestamp} - ${info.level}: ${info.message}`,
     ),
   ),
-  transports: [new transports.Console()],
+  // In agent mode stdout is reserved for the JSON document, so log to stderr.
+  transports: [
+    new transports.Console(
+      isAgentMode() ? { stderrLevels: Object.keys(config.npm.levels) } : {},
+    ),
+  ],
   exitOnError: false,
 });
 module.exports = logger;

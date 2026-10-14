@@ -23,6 +23,14 @@ const {
   getAccessToken,
 } = require("../analyzer/tools/auth0");
 const CONSTANTS = require('../analyzer/lib/constants');
+const {
+  isAgentMode,
+  resolveTenantDomain,
+  getDisplayDomain,
+  buildAgentOutput,
+  buildAgentError,
+  writeJsonAndExit,
+} = require("../analyzer/lib/agent-mode");
 /**
  * print current version of the package
  * Access the version from package.json
@@ -53,15 +61,22 @@ Handlebars.registerHelper("replace", function (str, search, replace) {
 Handlebars.registerHelper("and", (a, b) => a && b); // Logical AND
 Handlebars.registerHelper("inc", (a) => parseInt(a) + 1);
 
-console.log(
-  chalk.yellow(
-    figlet.textSync("CheckMate\nfor Auth0", {
-      horizontalLayout: "full",
-      width: 80,
-    }),
-  ),
-);
-console.log(chalk.yellow(`Current Version: ${version}\n`));
+// Agent mode: stdout carries a single JSON document, so every console.log goes
+// to stderr and the banner is skipped.
+const agentMode = isAgentMode();
+if (agentMode) {
+  console.log = console.error;
+} else {
+  console.log(
+    chalk.yellow(
+      figlet.textSync("CheckMate\nfor Auth0", {
+        horizontalLayout: "full",
+        width: 80,
+      }),
+    ),
+  );
+  console.log(chalk.yellow(`Current Version: ${version}\n`));
+}
 // Load static assets required for report generation.
 const templateData = fs.readFileSync(
   path.join(__dirname, "../views/pdf_cli_report.handlebars"),
@@ -136,7 +151,8 @@ async function processAuth0Config(locale, tenant, config) {
   logger.log("info", "Processing Auth0 configuration:");
   const report = await generateReport(locale, tenant, config);
   const today = await getToday(locale);
-  const { auth0Domain, filePath } = config;
+  const { filePath } = config;
+  const auth0Domain = getDisplayDomain(config);
   const data = { report, auth0Domain, today, locale, version, config };
   await printReportToCli(filePath, data);
 }
@@ -166,13 +182,33 @@ async function printReportToCli(filePath, data) {
     // Print the table
     console.log(table.toString());
 
-    await generateJson(filePath, data);
+    const jsonPath = await generateJson(filePath, data);
+
+    if (agentMode) {
+      // JSON consumers do not need a PDF; emit the single JSON document instead.
+      if (!jsonPath) {
+        throw new Error("failed to save JSON report");
+      }
+      process.stdout.write(
+        `${JSON.stringify(
+          buildAgentOutput({
+            tenant: data.config.tenantDomain || data.auth0Domain,
+            version,
+            findings: data.report.summary,
+            jsonPath,
+          }),
+        )}\n`,
+      );
+      return;
+    }
 
     if (!data.config.disablePdfReporting) {
           await generatePdf(filePath, data);
         } else {
           console.log(chalk.yellow("PDF report generation skipped (disabled by configuration)."));
         }
+  } else if (agentMode) {
+    throw new Error("failed to generate report");
   } else {
     console.log(chalk.red(`failed to generate report`));
   }
@@ -195,6 +231,7 @@ async function generateJson(filePath, data) {
     console.log(
       chalk.yellow(`\nJSON report has been saved at ${fileFullPathJSON}\n`),
     );
+    return fileFullPathJSON;
   } catch (e) {
     logger.log("error", `Failed to generate JSON report: ${e}`);
   }
@@ -323,8 +360,16 @@ async function main() {
   const envClientId = process.env.AUTH0CHECKMATE_CLIENT_ID;
   const envClientSecret = process.env.AUTH0CHECKMATE_CLIENT_SECRET;
   const envAuthReady = envDomain && envClientId && envClientSecret;
-  const envFilePath = process.env.AUTH0CHECKMATE_FILE_PATH; 
+  const envFilePath = process.env.AUTH0CHECKMATE_FILE_PATH;
   const envShowValidators = process.env.AUTH0CHECKMATE_SHOW_VALIDATORS;
+
+  // Auth0 CLI plugin mode: when launched by `auth0 <plugin>`, the CLI sets the
+  // proxy env vars. In this mode checkmate runs non-interactively — the proxy
+  // supplies auth, and the behavioral prompts fall back to sensible defaults.
+  const cliProxyUrl = process.env.AUTH0_CLI_PROXY_URL;
+  const cliProxyToken = process.env.AUTH0_CLI_PROXY_TOKEN;
+  const cliProxyReady = Boolean(cliProxyUrl && cliProxyToken);
+
   let defaultShowValidators = null;
   
   if (envShowValidators) {
@@ -334,19 +379,21 @@ async function main() {
     answers.showValidators = false; 
   }
 
-  // Prompt 1: Show validators
-  if (defaultShowValidators === null) {
-  const { showValidators } = await inquirer.prompt({
-    type: "confirm",
-    name: "showValidators",
-    message: "Show me the list of validators:",
-    default: false,
-  });
-  answers.showValidators = showValidators;
-  } else if (defaultShowValidators) {
-    console.log(chalk.green(`\n✅  Showing validators as configured by AUTH0CHECKMATE_SHOW_VALIDATORS.`));
-  } else {
-    console.log(chalk.yellow(`\n⚠️  Skipping validator list as configured by AUTH0CHECKMATE_SHOW_VALIDATORS.`));
+  // Prompt 1: Show validators (skipped non-interactively in CLI plugin mode)
+  if (defaultShowValidators !== null) {
+    if (defaultShowValidators) {
+      console.log(chalk.green(`\n✅  Showing validators as configured by AUTH0CHECKMATE_SHOW_VALIDATORS.`));
+    } else {
+      console.log(chalk.yellow(`\n⚠️  Skipping validator list as configured by AUTH0CHECKMATE_SHOW_VALIDATORS.`));
+    }
+  } else if (!cliProxyReady) {
+    const { showValidators } = await inquirer.prompt({
+      type: "confirm",
+      name: "showValidators",
+      message: "Show me the list of validators:",
+      default: false,
+    });
+    answers.showValidators = showValidators;
   }
 
 // The subsequent check now safely relies on answers.showValidators, 
@@ -358,7 +405,19 @@ if (answers.showValidators) {
 
   // Auto-detect or prompt for authentication method
   let authMethod;
-  if (envAuthReady) {
+  // In CLI plugin mode, reach the Management API through the CLI's local
+  // auth-injecting proxy. The proxy holds the real access token, swaps it in
+  // per request, and enforces scopes, so checkmate points its "domain" at the
+  // proxy, sends the per-run proxy secret as its bearer, and skips its own
+  // authentication and scope decode (the proxy secret is opaque, not a JWT).
+  if (cliProxyReady) {
+    authMethod = "cliProxy";
+    answers.auth0Domain = cliProxyUrl.replace(/^https?:\/\//, "");
+    // auth0Domain is the local proxy host; tenantDomain is the real tenant, for display.
+    answers.tenantDomain = resolveTenantDomain(process.env, answers.auth0Domain);
+    answers.auth0MgmtToken = cliProxyToken;
+    console.log(chalk.green(`\n✅  Using the Auth0 CLI proxy to authenticate (${answers.tenantDomain}).`));
+  } else if (envAuthReady) {
     // Use Environment Variables by default (non-interactive)
     authMethod = "envVars";
     answers.auth0ClientId = envClientId;
@@ -440,7 +499,7 @@ if (answers.showValidators) {
       console.error(e.message);
       process.exit(0);
     }
-  } else if (authMethod !== "envVars") {
+  } else if (authMethod !== "envVars" && authMethod !== "cliProxy") {
     // Options 1 & 2: unchanged
     // Prompt 3: Auth0 Domain
     const { auth0Domain } = await inquirer.prompt({
@@ -515,8 +574,12 @@ if (answers.showValidators) {
     // A. Use environment variable directly (non-interactive)
     answers.filePath = envFilePath;
     console.log(chalk.green(`\n✅ Using output path from environment variable: ${envFilePath}`));
+  } else if (cliProxyReady) {
+    // B. CLI plugin mode: default the output path instead of prompting.
+    answers.filePath = "./reports";
+    console.log(chalk.green(`\n✅  Saving the report to ./reports (Auth0 CLI plugin mode).`));
   } else {
-    // B. Fall back to interactive prompt
+    // C. Fall back to interactive prompt
     const { filePath } = await inquirer.prompt({
       type: "input",
       name: "filePath",
@@ -536,6 +599,7 @@ if (answers.showValidators) {
   // Construct config
   const config = {
     auth0Domain: answers.auth0Domain,
+    tenantDomain: answers.tenantDomain,
     auth0CanonicalDomain: answers.auth0CanonicalDomain || null,
     auth0ClientId: answers.auth0ClientId || null,
     auth0ClientSecret: answers.auth0ClientSecret || null,
@@ -548,10 +612,22 @@ if (answers.showValidators) {
 
   const tenant = {};
 
-  processAuth0Config(answers.locale, tenant, config);
+  const run = processAuth0Config(answers.locale, tenant, config);
+  if (agentMode) {
+    await run.catch(exitWithAgentError);
+  }
+}
+
+function exitWithAgentError(err) {
+  logger.log("error", `Error: ${err.message}`);
+  writeJsonAndExit(buildAgentError(err), 1);
 }
 // Execute the script
 main().catch((err) => {
+  if (agentMode) {
+    exitWithAgentError(err);
+    return;
+  }
   logger.log("error", `Error: ${err.message}`);
   process.exit(1);
 });

@@ -1069,7 +1069,8 @@
 		"enable_dynamic_client_registration": "Dynamic Client Registration is not enabled",
 		"severity": "GenAI",
 		"status": "violet",
-		"severity_message": "Review Tenant Settings > Advanced > OIDC Dynamic Application Registration"
+		"severity_message": "Review Tenant Settings > Advanced > OIDC Dynamic Application Registration",
+		"tenant_setting_missing": "checkEnabledDynamicClientRegistration.tenant_setting_missing"
 	},
 	"checkSessionLifetime": {
 		"title": "Session Management",
@@ -1108,7 +1109,8 @@
 		"status": "blue",
 		"severity_message": "Review Tenant Settings > Advanced > Session Expiration",
 		"idle_ephemeral_session_lifetime": "checkSessionLifetime.idle_ephemeral_session_lifetime",
-		"ephemeral_session_lifetime": "checkSessionLifetime.ephemeral_session_lifetime"
+		"ephemeral_session_lifetime": "checkSessionLifetime.ephemeral_session_lifetime",
+		"tenant_setting_missing": "checkSessionLifetime.tenant_setting_missing"
 	},
 	"checkSupportEmail": {
 		"title": "Support Email",
@@ -1140,7 +1142,8 @@
 		"no_support_email": "There is no support email configured for the tenant.",
 		"severity": "Info",
 		"status": "blue",
-		"severity_message": "Review Tenant Settings > Support Email"
+		"severity_message": "Review Tenant Settings > Support Email",
+		"tenant_setting_missing": "checkSupportEmail.tenant_setting_missing"
 	},
 	"checkSupportUrl": {
 		"title": "Support URL",
@@ -1173,7 +1176,8 @@
 		"no_support_url": "No support URL is configured in the tenant.",
 		"severity": "Info",
 		"status": "blue",
-		"severity_message": "Review Tenant Settings > Support URL"
+		"severity_message": "Review Tenant Settings > Support URL",
+		"tenant_setting_missing": "checkSupportUrl.tenant_setting_missing"
 	},
 	"checkTenantLoginUrl": {
 		"title": "Tenant Login URI",
